@@ -152,7 +152,7 @@ RBF basis of the Bayesian model depend on local neighbourhoods, so that's the me
 matters here. MERT's raw space is very anisotropic (mean cosine 0.78 between random clips),
 which compresses similarities. Centering helps but doesn't close the gap. Mid layers (6–8)
 are best, as the MERT paper suggests for genre-like tasks. Concatenation adds nothing on this
-sample. CLAP is also about 4× cheaper on CPU (see the report), and its text tower enables
+sample. CLAP is also ~4.8× cheaper on CPU (0.44 vs 2.12 s per track, 3 × 10 s windows, 4 threads), and its text tower enables
 the cold-start bridge.
 
 Caveats:
@@ -192,7 +192,44 @@ Caveats:
 
 ## 5. Context features (tags, era, lyrics)
 
-RESULTS_CONTEXT
+Four feature groups (`features/context.py`), each switchable for ablation:
+
+* **tags**: TF-IDF over Last.fm top tags, MusicBrainz tags, and FMA/Jamendo tags, reduced
+  to 16 dims with SVD, plus a has-tags flag. Missingness is a feature because niche tracks
+  have fewer tags.
+* **era**: release decade one-hot, z-scored year, missing flag. MusicBrainz era is the
+  *earliest* date across matching recordings.
+* **lyrics**: LRCLIB plain lyrics → `all-MiniLM-L6-v2` → PCA 16, plus instrumental and
+  missing flags. You said lyrics are secondary, so their weight is learned, not fixed.
+* **pop**: log popularity z-scored within source. **Off by default.** Included only to show
+  what it does.
+
+Ablation on the simulated listener, with paired differences on the same 30 folds
+(`reports/eval_simulated.md`):
+
+| added to CLAP audio | Δ NDCG@10 (95 % CI) | folds won | effect on niche-ness |
+|---|---|---|---|
+| tags (ranker) | **+0.081** [+0.044, +0.118] | 25/30 | top-10 popularity pct 0.51 → 0.56 |
+| tags (Bayes) | **+0.064** [+0.025, +0.099] | 22/30 | 0.50 → 0.56 |
+| era | +0.002 [−0.014, +0.018] | 12/30 | none |
+| lyrics | −0.000 [−0.010, +0.009] | 11/30 | none (1.7 % coverage) |
+| era + lyrics on top of tags | −0.008 [−0.025, +0.008] | 15/30 | — |
+| popularity (Bayes) | **+0.057** [+0.026, +0.089] | 23/30 | **0.50 → 0.67** |
+
+How to read this:
+- **Tags help clearly.** They're also the most leakage-prone group, because FMA tags often
+  name the genre and the simulated listener is defined by genre. Expect a smaller gain on
+  your data.
+- **Era does nothing here, and that's the right answer.** The simulated listener has no era
+  preference, and the model didn't invent one. On your data (older Linkin Park, 1970 Free)
+  it may matter. I can't tell from this test.
+- **Lyrics: inconclusive, not negative.** LRCLIB matched 21 of 1,240 FMA tracks (19 with lyrics, 2 instrumental). Your
+  library should have far higher coverage, so re-run the ablation with
+  `rezonate evaluate --context-groups tags,era,lyrics`.
+- **Popularity raises NDCG and drags picks toward the mainstream.** The simulated listener
+  has a mild popularity pull, so ranking popular songs higher pays off in NDCG. It also
+  moves the top 10 from the 50th to the 67th popularity percentile. That's the
+  mainstream-recommender failure mode you want to avoid, so it stays off by default.
 
 ## 6. Exploration
 
@@ -241,7 +278,36 @@ Baselines are **popularity** (FMA/Jamendo listens or Last.fm listeners, as a wit
 percentile) and **random**. `top10_pop_pct` is the mean popularity percentile of a model's
 top 10, a direct read on "does it surface niche songs?".
 
-RESULTS_EVAL
+Simulated listener: 1,240 FMA tracks; 300 random tracks rated per persona; 3 personas ×
+5 folds × 2 repeats = 30 folds.
+
+| model (audio only) | NDCG@10 | 95 % CI | P@10 like+ | top-10 pop pct |
+|---|---|---|---|---|
+| kNN, CLAP | **0.488** | [0.447, 0.532] | 0.62 | 0.48 |
+| Bayes, CLAP | 0.481 | [0.443, 0.518] | 0.57 | 0.50 |
+| Ranker, CLAP | 0.473 | [0.427, 0.518] | 0.59 | 0.51 |
+| kNN, CLAP+MERT-L8 | 0.491 | [0.455, 0.528] | 0.60 | 0.47 |
+| Bayes, MERT-L8 | 0.438 | [0.407, 0.468] | 0.52 | 0.47 |
+| **popularity** | 0.417 | [0.359, 0.470] | 0.45 | **0.92** |
+| random | 0.265 | [0.226, 0.304] | 0.34 | 0.50 |
+| *best with context:* Ranker, CLAP + tags | 0.554 | [0.513, 0.591] | 0.63 | 0.56 |
+
+Paired comparisons on the same folds:
+- **Taste models vs popularity: +0.06 to +0.07 NDCG@10, but the 95 % CI includes 0**
+  (kNN +0.072 [−0.006, +0.154], 18/30 folds). Popularity is a strong baseline on this
+  simulated listener because they have a built-in popularity pull. The audio models match
+  or beat it *while recommending from the middle of the popularity distribution* (50th
+  percentile vs 92nd), which is the point of the project. With tags the gap widens
+  (0.554 vs 0.417).
+- **CLAP vs MERT** (kNN): +0.082 [+0.045, +0.123], 23/30. Consistent with §3.
+- **kNN vs ranker vs Bayes** (audio only): no detectable difference (|Δ| ≤ 0.015, CIs span
+  0). At ~240 training labels the simple baseline is as good as the learned models. The
+  Bayesian model earns its place through uncertainty (§6) and online updates, not offline
+  NDCG.
+
+What to expect on your data: 150 seed ratings plus loves gives roughly 30–60 held-out
+tracks per fold, so CIs will be about as wide as these. Give it a few hundred ratings
+before reading much into model-vs-model differences.
 
 ## 8. Rating tool
 

@@ -50,9 +50,9 @@ for ax, view in zip(axes, ["clap", "mert:mean"]):
         ax.set_title(f"{view}: {e}"); continue
     Z = PCA(2, random_state=0).fit_transform(X)
     genre = cat.tracks.loc[ids, "genre_hint"].fillna("unknown")
-    for gname in genre.value_counts().index[:12]:
+    for j, gname in enumerate(genre.value_counts().index[:16]):
         m = (genre == gname).values
-        ax.scatter(Z[m, 0], Z[m, 1], s=6, alpha=0.6, label=gname)
+        ax.scatter(Z[m, 0], Z[m, 1], s=6, alpha=0.6, label=gname, color=plt.cm.tab20(j))
     ax.set_title(view); ax.set_xticks([]); ax.set_yticks([])
 axes[0].legend(markerscale=3, fontsize=7, ncol=2)
 plt.tight_layout()"""),

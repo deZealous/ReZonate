@@ -33,5 +33,7 @@ Sample: 440 FMA clips (30 s), 11 top-level genres, stratified (~40/genre). Same 
 
 Selected MERT view: **mert_L8** (use view name `mert:L8`).
 
-## Cost (?, ? threads, this dev container; `scripts/bench_embed.py`)
+## Cost (cpu, 4 threads, this dev container; `scripts/bench_embed.py`)
 
+* clap: 0.44 s/track model + 0.17 s decode (3 x 10 s windows)
+* mert: 2.12 s/track model + 0.16 s decode (3 x 10 s windows)

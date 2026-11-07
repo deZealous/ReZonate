@@ -33,7 +33,11 @@ def main() -> None:
     ap.add_argument("--n-labels", type=int, default=300)
     ap.add_argument("--personas", type=int, default=3)
     ap.add_argument("--repeats", type=int, default=2)
+    ap.add_argument("--report-only", action="store_true",
+                    help="rebuild the markdown from the saved fold CSVs")
     args = ap.parse_args()
+    if args.report_only:
+        return report_only()
 
     cfg = load_config()
     con = db.connect(cfg.db_path)
@@ -66,15 +70,52 @@ def main() -> None:
     summ = protocol.summarise(runs.drop(columns=["persona"]))
     summ.to_csv(out / "eval_simulated_summary.csv", index=False)
 
+    meta_info = {"n_tracks": len(ids), "n_labels": args.n_labels, "repeats": args.repeats,
+                 "personas": args.personas, "tags_cov": cov["tags"], "era_cov": cov["era"],
+                 "lyrics_cov": lyr_cov}
+    (out / "eval_simulated_meta.json").write_text(json.dumps(meta_info))
+    write_report(runs, summ, meta_info, out)
+
+
+PAIRS = [  # (better?, baseline) comparisons reported with paired fold-level differences
+    ("knn | clap", "popularity"), ("bayes | clap", "popularity"), ("ranker | clap", "popularity"),
+    ("knn | clap", "knn | mert:L8"), ("bayes | clap", "knn | clap"),
+    ("ranker | clap", "knn | clap"),
+    ("ranker | clap+tags", "ranker | clap"), ("bayes | clap+tags", "bayes | clap"),
+    ("ranker | clap+era", "ranker | clap"), ("ranker | clap+lyrics", "ranker | clap"),
+    ("bayes | clap+pop", "bayes | clap"),
+    ("ranker | clap+tags+era+lyrics", "ranker | clap+tags"),
+]
+
+
+def paired_table(runs: pd.DataFrame, metric: str = "ndcg@10") -> str:
+    from rezonate.eval.metrics import mean_ci
+    key = ["persona", "fold"]
+    piv = runs.pivot_table(index=key, columns="model", values=metric)
+    rows = []
+    for a, b in PAIRS:
+        if a not in piv or b not in piv:
+            continue
+        d = (piv[a] - piv[b]).dropna()
+        mu, lo, hi = mean_ci(d.values)
+        rows.append({"comparison": f"{a}  vs  {b}", "mean Δ": mu, "95% CI": f"[{lo:+.3f}, {hi:+.3f}]",
+                     "folds won": f"{int((d > 0).sum())}/{len(d)}"})
+    return pd.DataFrame(rows).to_markdown(index=False, floatfmt="+.3f")
+
+
+def write_report(runs: pd.DataFrame, summ: pd.DataFrame, m: dict, out) -> None:
     def table(mask):
         d = summ[mask(summ.model)]
         cols = ["model", "ndcg@10", "ndcg@10_ci", "ndcg@5", "p@10(like+)", "top10_pop_pct"]
         return d[cols].to_markdown(index=False, floatfmt=".3f")
 
-    def main_mask(m):
-        return ~m.str.contains(r"\+(tags|era|lyrics|pop)", regex=True)
-    def abl_mask(m):
-        return m.str.contains(r"\| clap", regex=True) & ~m.str.startswith("knn")
+    def main_mask(s):
+        return ~s.str.contains(r"\+(?:tags|era|lyrics|pop)", regex=True)
+
+    def abl_mask(s):
+        return s.str.contains(r"\| clap", regex=True) & ~s.str.contains("mert") & \
+            ~s.str.startswith("knn")
+
     n_folds = runs.groupby("model").size().iloc[0]
     md = [
         "# Offline evaluation on a SIMULATED listener (FMA)",
@@ -83,14 +124,14 @@ def main() -> None:
         "> listener is simulated from FMA genre labels (see `src/rezonate/eval/simulate.py`).",
         "> Re-run `rezonate evaluate` on your own ratings before trusting any conclusion.",
         "",
-        f"* catalogue: {len(ids)} FMA tracks; each persona rates {args.n_labels} random tracks",
+        f"* catalogue: {m['n_tracks']} FMA tracks; each persona rates {m['n_labels']} random tracks",
         f"* persona taste modes: {', '.join(PERSONA_MODES)}",
-        f"* protocol: 5-fold x {args.repeats} repeats x {args.personas} personas = {n_folds} "
+        f"* protocol: 5-fold x {m['repeats']} repeats x {m['personas']} personas = {n_folds} "
         "folds per model; NDCG@10 on held-out rated tracks (gain 2^grade - 1); 95 % bootstrap CI",
         "* `top10_pop_pct`: mean popularity percentile of each model's top 10 "
         "(lower = more niche picks)",
-        f"* context coverage on this sample: tags {cov['tags']:.0%}, era {cov['era']:.0%}, "
-        f"lyrics {lyr_cov:.1%} (LRCLIB rarely knows FMA artists)",
+        f"* context coverage on this sample: tags {m['tags_cov']:.0%}, era {m['era_cov']:.0%}, "
+        f"lyrics {m['lyrics_cov']:.1%} (LRCLIB rarely knows FMA artists)",
         "",
         "## Taste models vs baselines (audio only)",
         "",
@@ -100,9 +141,20 @@ def main() -> None:
         "",
         table(abl_mask),
         "",
+        "## Paired differences (same folds; more sensitive than comparing the CIs above)",
+        "",
+        paired_table(runs),
+        "",
     ]
     (out / "eval_simulated.md").write_text("\n".join(md))
     print("\n".join(md))
+
+
+def report_only() -> None:
+    out = REPO_ROOT / "reports"
+    runs = pd.read_csv(out / "eval_simulated_folds.csv")
+    summ = pd.read_csv(out / "eval_simulated_summary.csv")
+    write_report(runs, summ, json.loads((out / "eval_simulated_meta.json").read_text()), out)
 
 
 if __name__ == "__main__":
