@@ -18,11 +18,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["clap", "mert"])
     ap.add_argument("--batch-tracks", type=int, default=4)
+    ap.add_argument("--priority", help="file of track_ids to embed first (e.g. the comparison set)")
     args = ap.parse_args()
     cfg = load_config()
     con = db.connect(cfg.db_path)
     items = con.execute("SELECT track_id, audio_path FROM tracks WHERE audio_path IS NOT NULL "
                         "ORDER BY track_id").fetchall()
+    if args.priority:
+        first = set(open(args.priority).read().split())
+        items.sort(key=lambda it: it[0] not in first)
     stats = {}
     for name in args.models:
         model = get_embedder(name)

@@ -30,7 +30,7 @@ def main() -> None:
     ci, mi = {t: i for i, t in enumerate(clap_ids)}, {t: i for i, t in enumerate(mert_ids)}
     ids = [t for t in comp_ids if t in ci and t in mi]
     fids = [int(t.split(":")[1]) for t in ids]
-    y = meta.loc[fids, "genre_top"].values
+    y = meta.loc[fids, "genre_top"].to_numpy(dtype=object)
     sets = [set(g) for g in meta.loc[fids, "genres_all"]]
     views = {"clap": clap[[ci[t] for t in ids]]}
     views |= compare.mert_layer_views(mert[[mi[t] for t in ids]])
@@ -59,9 +59,8 @@ def main() -> None:
         h2h.append({"name": name, **compare.evaluate(X[B], y[B], [sets[i] for i in B])})
     h2h = pd.DataFrame(h2h)
 
-    stats_p = cfg.data_dir / "embed_stats.json"
-    stats = json.loads(stats_p.read_text()) if stats_p.exists() else {}
-    speed = {m: s.get("sec_per_track_model") for m, s in stats.items()}
+    bench_p = cfg.data_dir / "embed_bench.json"
+    bench = json.loads(bench_p.read_text()) if bench_p.exists() else {}
 
     out = REPO_ROOT / "reports"
     out.mkdir(exist_ok=True)
@@ -87,9 +86,12 @@ def main() -> None:
         "",
         f"Selected MERT view: **{best_mert}** (use view name `mert:{layer}`).",
         "",
-        "## Cost (CPU, 4 threads, this dev container; model forward only)",
+        f"## Cost ({bench.get('device', '?')}, {bench.get('threads', '?')} threads, this dev "
+        "container; `scripts/bench_embed.py`)",
         "",
-        *(f"* {m}: {s:.2f} s/track (3 x 10 s windows)" for m, s in speed.items() if s),
+        *(f"* {m}: {bench[m]['model_s_per_track']:.2f} s/track model + "
+          f"{bench[m]['decode_s_per_track']:.2f} s decode (3 x 10 s windows)"
+          for m in ("clap", "mert") if m in bench),
         "",
     ]
     (out / "embedding_comparison.md").write_text("\n".join(md))

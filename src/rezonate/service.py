@@ -56,15 +56,22 @@ def text_anchors(con: sqlite3.Connection, labels: pd.DataFrame, cat: Catalog,
     embed that text with CLAP's text tower, which shares the audio embedding space.
     CLAP has a known *modality gap* (text and audio vectors occupy offset regions), so we
     remove each modality's mean before normalising. We haven't validated this against
-    real loves; treat it as a prior that your first ratings should quickly override.
+    real loves. On FMA it matches real-audio anchors when the text is genre-like but is at
+    chance with noisy free tags (reports/text_bridge_check.md, where the genre-word
+    condition is optimistic because the simulated listener is defined by genre). Treat it
+    as a prior that your first ratings should quickly override.
     Only valid with the "clap" view.
     """
     need = labels[(labels.grade >= min_grade) & ~labels.track_id.isin(cat.row)]
     if need.empty:
         return [], np.zeros((0, cat.X.shape[1]))
-    tags = pd.read_sql_query("SELECT track_id, tag, weight FROM tags", con)
+    # Only descriptive, genre/mood-style tag sources. FMA/Jamendo free tags are often artist or
+    # place names, and with those the bridge ranks at chance (reports/text_bridge_check.md).
+    tags = pd.read_sql_query("SELECT track_id, tag, weight FROM tags WHERE source IN "
+                             "('lastfm', 'musicbrainz')", con)
     tags = tags[tags.track_id.isin(need.track_id)].sort_values("weight", ascending=False)
     texts = tags.groupby("track_id").tag.apply(lambda s: ", ".join(s.head(max_tags)))
+    texts = texts[texts.str.count(",") >= 1]  # need at least two tags to describe a sound
     if texts.empty:
         return [], np.zeros((0, cat.X.shape[1]))
     T = clap_text_fn([f"{t} music" for t in texts.values])

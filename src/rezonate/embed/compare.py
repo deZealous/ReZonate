@@ -38,6 +38,7 @@ def anisotropy(X: np.ndarray, n: int = 2000, seed: int = 0) -> float:
 
 
 def knn_metrics(X: np.ndarray, y: np.ndarray, sets: list[set] | None, k: int = 10) -> dict:
+    y = np.asarray(y, dtype=object)
     Z = prep(X)
     S = Z @ Z.T
     np.fill_diagonal(S, -np.inf)

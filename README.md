@@ -118,8 +118,11 @@ decoded, so your Loved songs carry no audio by default. They still help in three
 1. any DRM-free copy you own (`ingest-local`) is linked by artist+title and inherits the label;
 2. the **CLAP text bridge** (experimental): a loved song's Last.fm/MusicBrainz tags become
    text ("indie pop, dark pop, electropop music"), which CLAP's text tower embeds into the
-   *audio* space as a soft prior. `service.text_anchors` explains the modality-gap
-   correction. It isn't validated yet;
+   *audio* space as soft-weighted anchors. In `reports/text_bridge_check.md`, anchors built
+   from genre-style text rank the catalogue almost as well as the songs' real audio
+   (NDCG@50 0.40 vs 0.42; random 0.27). Built from FMA's noisy free tags they're at chance
+   (0.27), so only Last.fm/MusicBrainz tags are used. The good case is optimistic (see that
+   report), so treat the bridge as a prior that your ratings override;
 3. they provide the artist/era/tag context and the popularity baseline.
 
 I deliberately did **not** use 30 s store previews (iTunes Search API, Spotify). Apple's
@@ -128,7 +131,37 @@ and audio features for new apps in Nov 2024.
 
 ## 3. Audio embeddings: CLAP vs MERT
 
-RESULTS_EMBEDDINGS
+Compared on 440 FMA clips (11 genres × 40), with identical 10 s windows for both models
+(`scripts/compare_embeddings.py` → `reports/embedding_comparison.md`).
+[MERT-v1-95M](https://huggingface.co/m-a-p/MERT-v1-95M) was scored per layer. CLAP is
+[`laion/larger_clap_music_and_speech`](https://huggingface.co/laion/larger_clap_music_and_speech).
+
+| view | genre probe F1 | kNN P@10 | sub-genre Jaccard@10 | raw anisotropy |
+|---|---|---|---|---|
+| chance | 0.09 | 0.09 | 0.05 | — |
+| **CLAP** | **0.54** | **0.45** | **0.31** | 0.20 |
+| MERT best layer (L6) | 0.51 | 0.31 | 0.21 | 0.78 |
+| MERT mean of 13 layers | 0.46 | 0.28 | 0.19 | 0.81 |
+
+On a held-out half (MERT layer picked on the other half): CLAP 0.39 kNN P@10, MERT-L8 0.26,
+concat 0.37.
+
+**Choice: CLAP as the default view.** The gap is small for a *linear probe* (style is
+linearly decodable from both), but large for *nearest neighbours*. The kNN baseline and the
+RBF basis of the Bayesian model depend on local neighbourhoods, so that's the metric that
+matters here. MERT's raw space is very anisotropic (mean cosine 0.78 between random clips),
+which compresses similarities. Centering helps but doesn't close the gap. Mid layers (6–8)
+are best, as the MERT paper suggests for genre-like tasks. Concatenation adds nothing on this
+sample. CLAP is also about 4× cheaper on CPU (see the report), and its text tower enables
+the cold-start bridge.
+
+Caveats:
+- Genre is a proxy, not your taste. The taste evaluation (§7) runs with all three views.
+- CLAP was trained with text supervision that likely includes genre words, which favours it
+  on genre-based metrics.
+- I tested the 95M MERT with mean pooling. MERT-330M or learned attention pooling might
+  narrow the gap. `rezonate embed --model mert` plus the `mert:L<i>` views make that easy
+  to try on your own ratings.
 
 ## 4. Taste models and trade-offs
 
@@ -181,7 +214,23 @@ rating is logged with `context = explore | exploit`. The CLI prints the explore 
 so `explore_fraction` can be tuned from your data. Optional `--niche-bias` breaks near-ties
 toward less popular tracks.
 
-RESULTS_EXPLORATION
+**Does it pay off?** This is an online simulation on the simulated listener
+(`scripts/simulate_online.py`, `reports/exploration_simulated.md`). The listener starts
+with 30 ratings from only 2 of their 7 taste modes, then gets 10 batches of 20, over 8 seeds:
+
+| scenario | ε | hit rate | rounds to find a new mode ↓ | final catalogue NDCG@50 |
+|---|---|---|---|---|
+| full pool (liked music common) | 0 | 0.52 | 3.5 | 0.43 |
+| | **0.25** | 0.49 | **2.0** | 0.46 |
+| niche (each new mode = 12 tracks) | 0 | 0.67 | 6.7 | 0.39 |
+| | **0.25** | 0.59 | **5.4** | **0.52** |
+| | 0.5 | 0.48 | 4.9 | 0.53 |
+
+In the niche case, ε = 0.25 beats ε = 0 on final model quality in **8/8 seeds** and finds
+new modes faster in 7/8. The price is about 8 points of hit rate. That's the expected
+explore/exploit trade: some batch slots go to probes, and the model learns more about you
+from them. ε = 0.5 buys little extra model quality for a much bigger hit-rate cost, so
+0.25 is the default. Tune it once your explore hit rate is logged.
 
 ## 7. Evaluation
 
@@ -236,7 +285,8 @@ grade 3  P(like) 0.76 -> 0.77  (exploit: score 0.76)
   unreachable from my sandbox), plus the ~35k requests/month quota. `jamendo-probe` prints a
   raw response to check them.
 - Last.fm `track.getInfo` → `listeners` (from client libraries, not official docs).
-- The CLAP **text bridge** for DRM-only loves: plausible, but not evaluated.
+- The CLAP **text bridge** for DRM-only loves: checked only on the simulated listener,
+  with an optimistic genre-word proxy for Last.fm tags (`reports/text_bridge_check.md`).
 
 **Found along the way**
 - `laion/larger_clap_music` on Hugging Face is **broken**. It loads cleanly but has
