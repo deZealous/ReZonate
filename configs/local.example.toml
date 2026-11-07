@@ -1,0 +1,16 @@
+# Copy to configs/local.toml (git-ignored) and adjust.
+# Secrets are NOT read from this file: set LASTFM_API_KEY and JAMENDO_CLIENT_ID as env vars.
+
+# Where the SQLite DB, audio cache, embeddings and HTTP cache live.
+data_dir = "data"
+
+# MusicBrainz asks for a User-Agent that identifies the app and gives a contact URL/email.
+user_agent = "ReZonate/0.1 (https://github.com/dezealous/rezonate)"
+
+# Embedding view used for recommendations: "clap", "mert:L<i>", or "clap+mert:L<i>".
+# scripts/compare_embeddings.py writes its recommendation to data/selected_views.json.
+embedding_model = "clap"
+
+# Share of each batch reserved for exploration picks, and the batch size.
+explore_fraction = 0.25
+batch_size = 20
